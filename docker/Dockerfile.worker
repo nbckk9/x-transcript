@@ -1,0 +1,27 @@
+# Worker Dockerfile
+FROM python:3.11-slim-bookworm
+
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /opt/venv
+ENV PATH="/opt/venv/bin:$PATH"
+
+# Copy and install Python dependencies
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && \
+    pip install --no-cache-dir -e .
+
+# Copy application
+COPY --chmod=755 . .
+
+# Create directories
+RUN mkdir -p /app/storage /app/transcripts
+
+# Run worker
+CMD ["celery", "-A", "app.workers.transcriber_worker", "worker", "-l", "info", "--concurrency=2"]
