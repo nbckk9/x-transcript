@@ -253,7 +253,7 @@ class OpenAIProvider(LLMProvider):
     """OpenAI GPT provider."""
 
     def __init__(self, api_key: str = None, model: str = None):
-        super().__init__(api_key, model or "gpt-4o")
+        super().__init__(api_key, model or "gpt-4o-mini")
 
     def summarize(self, text: str, prompt: str) -> str:
         from openai import OpenAI
@@ -292,10 +292,10 @@ class AnthropicProvider(LLMProvider):
 
 
 class GroqProvider(LLMProvider):
-    """Groq (Llama 3) provider."""
+    """Groq (Llama 3/4) provider - Best speed/price ratio."""
 
     def __init__(self, api_key: str = None, model: str = None):
-        super().__init__(api_key, model or "llama-3.3-70b-versatile")
+        super().__init__(api_key, model or "meta-llama/llama-4-scout-17b-16e-instruct")
 
     def summarize(self, text: str, prompt: str) -> str:
         from groq import Groq
@@ -317,7 +317,7 @@ class OllamaProvider(LLMProvider):
     """Ollama local provider."""
 
     def __init__(self, api_key: str = None, model: str = None):
-        super().__init__(api_key, model or "llama3")
+        super().__init__(api_key, model or "llama3.2")
 
     def summarize(self, text: str, prompt: str) -> str:
         import httpx
