@@ -27,8 +27,11 @@ Examples:
     # With custom summary prompt
     uv run python cli.py "url" --summarize "5 key takeaways"
 
+    # Custom LLM provider
+    uv run python cli.py "url" --summarize --llm-provider anthropic --api-key "sk-..."
+
     # Custom model
-    uv run python cli.py "url" --model base
+    uv run python cli.py "url" --whisper-model base
 
     # Save to specific file
     uv run python cli.py "url" -o output.txt
@@ -41,7 +44,7 @@ Examples:
         help="URL of the X tweet with video",
     )
     parser.add_argument(
-        "--model",
+        "--whisper-model",
         default="tiny",
         choices=["tiny", "base", "small", "medium", "large"],
         help="Whisper model size (default: tiny)",
@@ -60,21 +63,48 @@ Examples:
         help="Summarize with custom prompt (default: '5 key takeaways from this video')",
     )
     parser.add_argument(
+        "--llm-provider",
+        default="openai",
+        choices=["openai", "anthropic", "groq", "ollama", "local"],
+        help="LLM provider for summarization (default: openai)",
+    )
+    parser.add_argument(
+        "--llm-model",
+        help="LLM model (provider-specific, e.g., gpt-4o, claude-3-5-sonnet)",
+    )
+    parser.add_argument(
         "--api-key",
-        help="OpenAI API key for summarization (or set OPENAI_API_KEY env var)",
+        help="API key for LLM provider (or set <PROVIDER>_API_KEY env var)",
     )
 
     args = parser.parse_args()
-    run_pipeline(args.url, args.model, args.output, args.summarize, args.api_key)
+    run_pipeline(
+        args.url,
+        args.whisper_model,
+        args.output,
+        args.summarize,
+        args.llm_provider,
+        args.llm_model,
+        args.api_key,
+    )
 
 
-def run_pipeline(url: str, model: str = "tiny", output_path: str = None, summarize: str = None, api_key: str = None):
+def run_pipeline(
+    url: str,
+    whisper_model: str = "tiny",
+    output_path: str = None,
+    summarize: str = None,
+    llm_provider: str = "openai",
+    llm_model: str = None,
+    api_key: str = None,
+):
     """Run the full transcription pipeline."""
     print(f"🎬 X-Transcript CLI")
     print(f"   URL: {url}")
-    print(f"   Model: {model}")
+    print(f"   Whisper: {whisper_model}")
     if summarize:
         print(f"   Summary: {summarize}")
+        print(f"   LLM Provider: {llm_provider}")
     print()
 
     import yt_dlp
@@ -138,14 +168,14 @@ def run_pipeline(url: str, model: str = "tiny", output_path: str = None, summari
         return
 
     # Step 3: Transcribe
-    print(f"\n3️⃣ Transcribing with Whisper ({model})...")
+    print(f"\n3️⃣ Transcribing with Whisper ({whisper_model})...")
     try:
         import whisper
 
         print("   Loading model...")
-        whisper_model = whisper.load_model(model)
+        whisper_model_obj = whisper.load_model(whisper_model)
         print("   Transcribing...")
-        result = whisper_model.transcribe(str(audio_path))
+        result = whisper_model_obj.transcribe(str(audio_path))
         word_count = len(result["text"].split())
         print(f"   ✓ {word_count} words")
     except ImportError:
@@ -157,22 +187,29 @@ def run_pipeline(url: str, model: str = "tiny", output_path: str = None, summari
         print(f"   ✗ Error: {e}")
         return
 
-    # Step 3.5: Summarize (optional)
+    # Step 4: Summarize (optional)
+    summary = None
     if summarize:
-        print(f"\n4️⃣ Summarizing...")
-        summary = summarize_transcript(result["text"], summarize, api_key)
+        print(f"\n4️⃣ Summarizing with {llm_provider}...")
+        summary = summarize_transcript(
+            result["text"],
+            summarize,
+            llm_provider,
+            llm_model,
+            api_key,
+        )
         print(f"\n   --- Summary ---")
         print(summary)
         print(f"   ---")
 
-    # Step 4: Export
+    # Step 5: Export
     print("\n5️⃣ Exporting...")
     if output_path is None:
         output_path = transcript_dir / f"{job_id}.txt"
 
     try:
         content = result["text"]
-        if summarize:
+        if summary:
             content = f"TRANSCRIPT:\n{result['text']}\n\nSUMMARY ({summarize}):\n{summary}"
         Path(output_path).write_text(content, encoding="utf-8")
         print(f"   ✓ {output_path}")
@@ -198,39 +235,155 @@ def run_pipeline(url: str, model: str = "tiny", output_path: str = None, summari
     print(f"\n✅ Complete! {output_path}")
 
 
-def summarize_transcript(transcript: str, prompt: str, api_key: str = None) -> str:
-    """Summarize transcript using OpenAI API."""
-    import os
+# ==================== LLM Provider Abstraction ====================
 
-    # Get API key from args or environment
-    api_key = api_key or os.environ.get("OPENAI_API_KEY")
+class LLMProvider:
+    """Base class for LLM providers."""
 
-    if not api_key:
-        return "⚠️ API key not set. Set OPENAI_API_KEY or use --api-key"
+    def __init__(self, api_key: str = None, model: str = None):
+        self.api_key = api_key
+        self.model = model
 
-    try:
+    def summarize(self, text: str, prompt: str) -> str:
+        """Summarize text with given prompt."""
+        raise NotImplementedError
+
+
+class OpenAIProvider(LLMProvider):
+    """OpenAI GPT provider."""
+
+    def __init__(self, api_key: str = None, model: str = None):
+        super().__init__(api_key, model or "gpt-4o")
+
+    def summarize(self, text: str, prompt: str) -> str:
         from openai import OpenAI
 
-        client = OpenAI(api_key=api_key)
-
+        client = OpenAI(api_key=self.api_key)
         response = client.chat.completions.create(
-            model="gpt-4o",
+            model=self.model,
             messages=[
-                {
-                    "role": "system",
-                    "content": "You are a helpful assistant that summarizes video transcripts. Be concise and structured.",
-                },
-                {
-                    "role": "user",
-                    "content": f"{prompt}\n\nTRANSCRIPT:\n{transcript[:15000]}",  # Limit to avoid token limits
-                },
+                {"role": "system", "content": "You are a helpful assistant that summarizes video transcripts. Be concise and structured."},
+                {"role": "user", "content": f"{prompt}\n\nTRANSCRIPT:\n{text[:15000]}"},
             ],
             temperature=0.7,
             max_tokens=1000,
         )
-
         return response.choices[0].message.content
 
+
+class AnthropicProvider(LLMProvider):
+    """Anthropic Claude provider."""
+
+    def __init__(self, api_key: str = None, model: str = None):
+        super().__init__(api_key, model or "claude-sonnet-4-20250514")
+
+    def summarize(self, text: str, prompt: str) -> str:
+        import anthropic
+
+        client = anthropic.Anthropic(api_key=self.api_key)
+        response = client.messages.create(
+            model=self.model,
+            max_tokens=1000,
+            messages=[
+                {"role": "user", "content": f"{prompt}\n\nTRANSCRIPT:\n{text[:15000]}"},
+            ],
+        )
+        return response.content[0].text
+
+
+class GroqProvider(LLMProvider):
+    """Groq (Llama 3) provider."""
+
+    def __init__(self, api_key: str = None, model: str = None):
+        super().__init__(api_key, model or "llama-3.3-70b-versatile")
+
+    def summarize(self, text: str, prompt: str) -> str:
+        from groq import Groq
+
+        client = Groq(api_key=self.api_key)
+        response = client.chat.completions.create(
+            model=self.model,
+            messages=[
+                {"role": "system", "content": "You are a helpful assistant that summarizes video transcripts. Be concise and structured."},
+                {"role": "user", "content": f"{prompt}\n\nTRANSCRIPT:\n{text[:15000]}"},
+            ],
+            temperature=0.7,
+            max_tokens=1000,
+        )
+        return response.choices[0].message.content
+
+
+class OllamaProvider(LLMProvider):
+    """Ollama local provider."""
+
+    def __init__(self, api_key: str = None, model: str = None):
+        super().__init__(api_key, model or "llama3")
+
+    def summarize(self, text: str, prompt: str) -> str:
+        import httpx
+
+        response = httpx.post(
+            "http://localhost:11434/api/generate",
+            json={
+                "model": self.model,
+                "prompt": f"{prompt}\n\nTRANSCRIPT:\n{text[:15000]}",
+                "stream": False,
+            },
+            timeout=120,
+        )
+        return response.json()["response"]
+
+
+class LocalProvider(LLMProvider):
+    """Generic local/CLI provider."""
+
+    def __init__(self, api_key: str = None, model: str = None):
+        super().__init__(api_key, model or "llamafile")
+
+    def summarize(self, text: str, prompt: str) -> str:
+        # Placeholder for local CLI tools
+        return f"[Local provider '{self.model}' not configured - implement in providers/local.py]"
+
+
+# Provider registry
+LLM_PROVIDERS = {
+    "openai": OpenAIProvider,
+    "anthropic": AnthropicProvider,
+    "groq": GroqProvider,
+    "ollama": OllamaProvider,
+    "local": LocalProvider,
+}
+
+
+def get_llm_provider(provider_name: str, api_key: str = None, model: str = None) -> LLMProvider:
+    """Get LLM provider by name."""
+    if provider_name not in LLM_PROVIDERS:
+        raise ValueError(f"Unknown provider: {provider_name}. Available: {list(LLM_PROVIDERS.keys())}")
+    return LLM_PROVIDERS[provider_name](api_key=api_key, model=model)
+
+
+def summarize_transcript(
+    transcript: str,
+    prompt: str,
+    provider: str = "openai",
+    model: str = None,
+    api_key: str = None,
+) -> str:
+    """Summarize transcript using specified LLM provider."""
+    import os
+
+    # Get API key from args, env var, or .env
+    env_key = f"{provider.upper()}_API_KEY"
+    api_key = api_key or os.environ.get(env_key) or os.environ.get("OPENAI_API_KEY")
+
+    if not api_key and provider not in ["ollama", "local"]:
+        return f"⚠️ API key not set. Set {env_key} or use --api-key"
+
+    try:
+        llm = get_llm_provider(provider, api_key=api_key, model=model)
+        return llm.summarize(transcript, prompt)
+    except ImportError as e:
+        return f"⚠️ Provider not installed: {e}\nRun: uv add {provider}"
     except Exception as e:
         return f"⚠️ Summarization failed: {e}"
 

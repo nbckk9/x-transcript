@@ -35,14 +35,17 @@ dependencies = [
     "python-dotenv>=1.0.0",
     # Utilities
     "python-multipart>=0.0.6",
+    # LLM Providers
     "openai>=2.16.0",
+    "anthropic>=0.34.0",
+    "groq>=0.11.0",
 ]
 
 [project.scripts]
 xtranscript = "app.main:app"
-xtranscript-cli = "cli_test:main"
+xtranscript-cli = "cli:main"
 
-[project.optional-dependencies]
+[dependency-groups]
 dev = [
     "pytest>=7.4.0",
     "pytest-asyncio>=0.21.0",
