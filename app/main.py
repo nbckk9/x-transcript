@@ -76,8 +76,9 @@ if settings.DEBUG:
         import hashlib
         from sqlalchemy import insert
         from app.models import User
+        from app.database import async_session_maker
 
-        async with app.state.db_session() as db:
+        async with async_session_maker() as db:
             await db.execute(
                 insert(User).values(
                     id=uuid.uuid4(),
