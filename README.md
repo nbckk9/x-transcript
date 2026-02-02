@@ -12,43 +12,48 @@ Transcribe X (Twitter) videos using OpenAI Whisper.
 - 📊 **Background processing** with Celery
 - 🐳 **Docker-ready** for deployment
 
-## Quick Start
+## Quick Start with UV
 
-### Prerequisites
-
-- Python 3.10+
-- FFmpeg
-- PostgreSQL (or use SQLite for development)
-- Redis (for Celery)
+We use [uv](https://docs.astral.sh/uv/) for fast, reliable Python package management.
 
 ### Installation
 
 ```bash
-# Clone the repository
-git clone https://github.com/yourusername/x-transcript.git
+# Install uv (if not already installed)
+curl -LsSf https://astral.sh/uv/install.sh | sh
+
+# Clone and setup
+git clone https://github.com/nbckk9/x-transcript.git
 cd x-transcript
 
-# Install dependencies
-pip install -e .
+# Create virtual environment and install dependencies
+uv sync
 
-# Copy environment file
-cp .env.example .env
+# Activate environment
+source .venv/bin/activate  # or: .\.venv\Scripts\activate on Windows
+```
 
-# Edit .env with your settings
-nano .env
+### CLI Usage
 
-# Initialize database
-python -c "import asyncio; from app.database import init_db; asyncio.run(init_db())"
+```bash
+# Transcribe a video directly
+uv run python cli_test.py "https://x.com/user/status/1234567890"
+
+# Or using the CLI tool (after installing)
+uv run xtranscript-cli "https://x.com/user/status/1234567890"
 ```
 
 ### Development
 
 ```bash
 # Run the API server
-uvicorn app.main:app --reload
+uv run uvicorn app.main:app --reload
 
 # Run Celery worker (separate terminal)
-celery -A app.workers.transcriber_worker worker -l info
+uv run celery -A app.workers.transcriber_worker worker -l info
+
+# Run tests
+uv run pytest tests/ -v
 ```
 
 ### Docker
@@ -87,19 +92,6 @@ curl "http://localhost:8000/api/v1/transcripts/TRANSCRIPT_ID/download" \
   -o transcript.txt
 ```
 
-## CLI Tool
-
-```bash
-# Install CLI
-pip install -e .
-
-# Transcribe a video
-xtranscript "https://x.com/user/status/1234567890"
-
-# With options
-xtranscript "url" --format srt --output my_transcript.srt
-```
-
 ## Architecture
 
 ```
@@ -124,18 +116,22 @@ xtranscript "url" --format srt --output my_transcript.srt
 
 ## Development
 
-### Running Tests
-
-```bash
-pytest tests/ -v
-```
-
 ### Code Formatting
 
 ```bash
-black app/ tests/
-isort app/ tests/
-ruff check app/
+uv run black app/ tests/
+uv run isort app/ tests/
+uv run ruff check app/
+```
+
+### Adding Dependencies
+
+```bash
+# Add a dependency
+uv add package-name
+
+# Add a dev dependency
+uv add --dev package-name
 ```
 
 ## Deployment
