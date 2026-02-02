@@ -3,8 +3,20 @@
 X-Transcript CLI - Transcribe X (Twitter) videos using OpenAI Whisper.
 
 Usage:
+    # From URL
     uv run python cli.py <tweet_url>
-    uv run xtranscript-cli <tweet_url>
+    uv run python cli.py "https://x.com/user/status/1234567890"
+
+    # From existing transcript
+    uv run python cli.py transcripts/<file>.txt
+    uv run python cli.py /path/to/transcript.txt --summarize "5 key takeaways"
+
+    # With summarization
+    uv run python cli.py "url" --summarize "5 key takeaways"
+    uv run python cli.py transcript.txt --summarize "Extract action items"
+
+    # Custom LLM
+    uv run python cli.py "url" --summarize --llm-provider anthropic
 """
 
 import sys
@@ -17,31 +29,28 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="Transcribe X (Twitter) videos using OpenAI Whisper",
+        description="Transcribe or summarize X (Twitter) videos",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-    # Basic transcription
+    # Transcribe from URL
     uv run python cli.py "https://x.com/user/status/1234567890"
 
-    # With custom summary prompt
+    # Transcribe + summarize
     uv run python cli.py "url" --summarize "5 key takeaways"
 
-    # Custom LLM provider
-    uv run python cli.py "url" --summarize --llm-provider anthropic --api-key "sk-..."
+    # Summarize existing transcript
+    uv run python cli.py transcripts/abc123.txt --summarize "5 key points"
 
-    # Custom model
-    uv run python cli.py "url" --whisper-model base
-
-    # Save to specific file
-    uv run python cli.py "url" -o output.txt
+    # Summarize with custom LLM
+    uv run python cli.py "url" --summarize --llm-provider groq
         """,
     )
     parser.add_argument(
-        "url",
+        "source",
         nargs="?",
         default="https://x.com/AlexFinn/status/2017991866306977944",
-        help="URL of the X tweet with video",
+        help="URL of X tweet OR path to existing transcript file",
     )
     parser.add_argument(
         "--whisper-model",
@@ -58,19 +67,19 @@ Examples:
         "--summarize",
         "-s",
         nargs="?",
-        const="5 key takeaways from this video",
+        const="5 key takeaways from this content",
         metavar="PROMPT",
-        help="Summarize with custom prompt (default: '5 key takeaways from this video')",
+        help="Summarize with custom prompt (default: '5 key takeaways')",
     )
     parser.add_argument(
         "--llm-provider",
-        default="openai",
+        default="groq",
         choices=["openai", "anthropic", "groq", "ollama", "local"],
-        help="LLM provider for summarization (default: openai)",
+        help="LLM provider for summarization (default: groq)",
     )
     parser.add_argument(
         "--llm-model",
-        help="LLM model (provider-specific, e.g., gpt-4o, claude-3-5-sonnet)",
+        help="LLM model (provider-specific, default varies by provider)",
     )
     parser.add_argument(
         "--api-key",
@@ -78,8 +87,20 @@ Examples:
     )
 
     args = parser.parse_args()
+
+    # Detect if source is a file or URL
+    source_path = Path(args.source)
+    if source_path.exists() and source_path.is_file():
+        mode = "file"
+    elif args.source.startswith(("http://", "https://")):
+        mode = "url"
+    else:
+        # Assume it's a file path (might not exist yet)
+        mode = "file"
+
     run_pipeline(
-        args.url,
+        args.source,
+        mode,
         args.whisper_model,
         args.output,
         args.summarize,
@@ -90,32 +111,81 @@ Examples:
 
 
 def run_pipeline(
-    url: str,
+    source: str,
+    mode: str = "url",
     whisper_model: str = "tiny",
     output_path: str = None,
     summarize: str = None,
-    llm_provider: str = "openai",
+    llm_provider: str = "groq",
     llm_model: str = None,
     api_key: str = None,
 ):
-    """Run the full transcription pipeline."""
+    """Run the full transcription or summarization pipeline."""
     print(f"🎬 X-Transcript CLI")
-    print(f"   URL: {url}")
-    print(f"   Whisper: {whisper_model}")
+    print(f"   Source: {source} ({mode})")
+    if mode == "url":
+        print(f"   Whisper: {whisper_model}")
     if summarize:
         print(f"   Summary: {summarize}")
-        print(f"   LLM Provider: {llm_provider}")
+        print(f"   LLM: {llm_provider}")
     print()
 
-    import yt_dlp
-    import ffmpeg
-
-    job_id = uuid.uuid4()
     base_dir = Path(__file__).parent
     storage_dir = base_dir / "storage"
     transcript_dir = base_dir / "transcripts"
     storage_dir.mkdir(parents=True, exist_ok=True)
     transcript_dir.mkdir(parents=True, exist_ok=True)
+
+    # MODE: Summarize existing file
+    if mode == "file":
+        source_path = Path(source)
+        if not source_path.exists():
+            print(f"   ✗ File not found: {source}")
+            return
+
+        try:
+            text = source_path.read_text(encoding="utf-8")
+            word_count = len(text.split())
+            print(f"   ✓ Loaded: {source_path.name} ({word_count} words)")
+        except Exception as e:
+            print(f"   ✗ Error reading file: {e}")
+            return
+
+        result = {"text": text}
+
+        # Summarize if requested
+        if summarize:
+            print(f"\n2️⃣ Summarizing...")
+            summary = summarize_transcript(
+                text,
+                summarize,
+                llm_provider,
+                llm_model,
+                api_key,
+            )
+            print(f"\n   --- Summary ---")
+            print(summary)
+            print(f"   ---")
+
+            # Export
+            print(f"\n3️⃣ Exporting...")
+            output_path = output_path or str(transcript_dir / f"{source_path.stem}_summary.txt")
+            try:
+                content = f"SUMMARY ({summarize}):\n{summary}\n\n---\n\nORIGINAL:\n{text}"
+                Path(output_path).write_text(content, encoding="utf-8")
+                print(f"   ✓ {output_path}")
+            except Exception as e:
+                print(f"   ✗ Error: {e}")
+                return
+
+        print(f"\n✅ Complete!")
+        return
+
+    # MODE: Transcribe from URL
+    import yt_dlp
+    import ffmpeg
+
+    job_id = uuid.uuid4()
 
     # Step 1: Download
     print("1️⃣ Downloading video...")
@@ -130,7 +200,7 @@ def run_pipeline(
 
     try:
         with yt_dlp.YoutubeDL(ytdlp_opts) as ydl:
-            ydl.download([url])
+            ydl.download([source])
 
         video_path = None
         for ext in ["mp4", "mkv", "webm", "m4a"]:
@@ -181,7 +251,6 @@ def run_pipeline(
     except ImportError:
         print("   ⚠️ Whisper not installed")
         print("   Run: uv add openai-whisper")
-        print(f"\n✅ Pipeline complete. Audio saved: {audio_path}")
         return
     except Exception as e:
         print(f"   ✗ Error: {e}")

@@ -1,156 +1,157 @@
 # X-Transcript
 
-Transcribe X (Twitter) videos using OpenAI Whisper.
+Transcribe and summarize X (Twitter) videos using OpenAI Whisper + LLMs.
 
 ## Features
 
-- 🎥 **Extract** video URLs from X tweets
-- ⬇️ **Download** videos for processing
-- 🎙️ **Transcribe** using OpenAI Whisper (local, free)
-- 📄 **Export** in multiple formats (TXT, SRT, VTT, JSON, MD)
-- 🚀 **REST API** for integration
-- 📊 **Background processing** with Celery
-- 🐳 **Docker-ready** for deployment
+- 🎥 **Transcribe** videos from X (Twitter) URLs
+- 📄 **Summarize** transcripts with AI (GPT-4o-mini, Llama 4, Claude)
+- 💾 **Local processing** - Whisper runs locally (free, private)
+- 🔧 **Works with existing transcripts** - Just pass a text file
+- 🐳 **Docker-ready** for easy deployment
 
-## Quick Start with UV
-
-We use [uv](https://docs.astral.sh/uv/) for fast, reliable Python package management.
-
-### Installation
+## Quick Start
 
 ```bash
-# Install uv (if not already installed)
+# Install uv
 curl -LsSf https://astral.sh/uv/install.sh | sh
 
 # Clone and setup
 git clone https://github.com/nbckk9/x-transcript.git
 cd x-transcript
-
-# Create virtual environment and install dependencies
 uv sync
-
-# Activate environment
-source .venv/bin/activate  # or: .\.venv\Scripts\activate on Windows
 ```
 
-### CLI Usage
+## CLI Usage
+
+### Transcribe from URL
 
 ```bash
-# Transcribe a video directly
-uv run python cli_test.py "https://x.com/user/status/1234567890"
-
-# Or using the CLI tool (after installing)
-uv run xtranscript-cli "https://x.com/user/status/1234567890"
+uv run python cli.py "https://x.com/user/status/1234567890"
 ```
 
-### Development
+### Transcribe + Summarize
 
 ```bash
-# Run the API server
+uv run python cli.py "url" --summarize "5 key takeaways"
+uv run python cli.py "url" -s "What are the main arguments?"
+uv run python cli.py "url" --summarize --llm-provider openai
+```
+
+### Summarize Existing Transcript
+
+```bash
+# From transcripts folder
+uv run python cli.py transcripts/abc123.txt --summarize "5 key points"
+
+# Any text file
+uv run python cli.py /path/to/transcript.txt --summarize "Extract action items"
+```
+
+### Options
+
+```bash
+--whisper-model tiny|base|small|medium|large  # Default: tiny
+--llm-provider groq|openai|anthropic           # Default: groq
+--llm-model <model-id>                         # Provider-specific
+--api-key <key>                                # Or use env var
+-o <file>                                      # Output path
+```
+
+## LLM Providers
+
+| Provider | Env Var | Default Model | Cost |
+|----------|---------|---------------|------|
+| **Groq** | `GROQ_API_KEY` | llama-4-scout | ~$0.01/transcript |
+| **OpenAI** | `OPENAI_API_KEY` | gpt-4o-mini | ~$0.01/transcript |
+| **Anthropic** | `ANTHROPIC_API_KEY` | claude-sonnet-4 | ~$0.02/transcript |
+| **Ollama** | (local) | llama3.2 | Free |
+
+```bash
+# Groq (fastest/cheapest)
+export GROQ_API_KEY="your-key"
+uv run python cli.py "url" --summarize
+
+# OpenAI
+export OPENAI_API_KEY="your-key"
+uv run python cli.py "url" --summarize --llm-provider openai
+
+# Anthropic
+export ANTHROPIC_API_KEY="your-key"
+uv run python cli.py "url" --summarize --llm-provider anthropic
+```
+
+## Project Structure
+
+```
+x-transcript/
+├── cli.py              # CLI tool (transcribe + summarize)
+├── app/                # FastAPI backend (for SaaS)
+│   ├── main.py
+│   ├── api/
+│   ├── services/
+│   └── workers/
+├── storage/            # Downloaded videos
+├── transcripts/        # Output transcripts
+├── docker/
+│   ├── Dockerfile
+│   └── docker-compose.yml
+└── pyproject.toml
+```
+
+## Development
+
+```bash
+# Run API server
 uv run uvicorn app.main:app --reload
 
-# Run Celery worker (separate terminal)
+# Run Celery worker
 uv run celery -A app.workers.transcriber_worker worker -l info
 
 # Run tests
 uv run pytest tests/ -v
+
+# Code formatting
+uv run black app/ tests/
+uv run ruff check app/
 ```
 
-### Docker
+## Docker
 
 ```bash
-# Start all services
+# Start API + Worker
 docker-compose up -d
 
 # View logs
 docker-compose logs -f
 ```
 
-## API Usage
-
-### Create a Job
+## API (FastAPI)
 
 ```bash
+# Create transcription job
 curl -X POST "http://localhost:8000/api/v1/jobs" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"tweet_url": "https://x.com/user/status/1234567890"}'
-```
+  -H "Authorization: Bearer TOKEN" \
+  -d '{"tweet_url": "https://x.com/user/status/123"}'
 
-### Check Status
-
-```bash
+# Check status
 curl "http://localhost:8000/api/v1/jobs/JOB_ID" \
-  -H "Authorization: Bearer YOUR_TOKEN"
+  -H "Authorization: Bearer TOKEN"
 ```
 
-### Download Transcript
+## Environment Variables
 
 ```bash
-curl "http://localhost:8000/api/v1/transcripts/TRANSCRIPT_ID/download" \
-  -H "Authorization: Bearer YOUR_TOKEN" \
-  -o transcript.txt
+# LLM Providers
+GROQ_API_KEY=...
+OPENAI_API_KEY=...
+ANTHROPIC_API_KEY=...
+
+# Database (for API mode)
+DATABASE_URL=postgresql://...
+REDIS_URL=redis://...
 ```
-
-## Architecture
-
-```
-┌─────────────────┐     ┌─────────────────┐     ┌─────────────────┐
-│  API Server     │────▶│  Redis Queue    │────▶│  Celery Worker  │
-│  (FastAPI)      │     │                 │     │  (Transcription)│
-└─────────────────┘     └─────────────────┘     └────────┬────────┘
-                                                         │
-                                                         ▼
-                                                ┌─────────────────┐
-                                                │  Whisper (local)│
-                                                └─────────────────┘
-```
-
-## Pricing (SaaS)
-
-| Tier | Price | Minutes/month |
-|------|-------|---------------|
-| Free | $0 | 30 |
-| Pro | $9/mo | 300 |
-| Team | $29/mo | 1500 |
-
-## Development
-
-### Code Formatting
-
-```bash
-uv run black app/ tests/
-uv run isort app/ tests/
-uv run ruff check app/
-```
-
-### Adding Dependencies
-
-```bash
-# Add a dependency
-uv add package-name
-
-# Add a dev dependency
-uv add --dev package-name
-```
-
-## Deployment
-
-### Production Checklist
-
-- [ ] Set `DEBUG=false`
-- [ ] Use strong `SECRET_KEY`
-- [ ] Configure PostgreSQL
-- [ ] Set up Redis
-- [ ] Configure CORS origins
-- [ ] Set up SSL/TLS
-- [ ] Configure backups
-- [ ] Set up monitoring
-
-### Kubernetes
-
-Helm charts available in `/k8s` directory (coming soon).
 
 ## License
 
-MIT License - see [LICENSE](LICENSE) for details.
+MIT
